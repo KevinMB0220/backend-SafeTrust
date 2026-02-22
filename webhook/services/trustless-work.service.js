@@ -9,7 +9,7 @@ class TrustlessWorkService {
   constructor() {
     this.baseUrl = process.env.TRUSTLESS_WORK_API_URL || 'https://api.trustlesswork.com';
     this.apiKey = process.env.TRUSTLESS_WORK_API_KEY;
-    
+
     if (!this.apiKey) {
       logger.warn('TRUSTLESS_WORK_API_KEY not configured');
     }
@@ -133,6 +133,45 @@ class TrustlessWorkService {
           status: error.response?.status || 500,
         },
       };
+    }
+  }
+
+
+  /**
+     * @param {string} contractId - The contract identifier.
+     * @param {string} senderAddress - The address of the sender.
+     * @param {string} amount - The amount to fund.
+     * @returns {Promise<{ contractId: string, unsignedXdr: string }>}
+     */
+  async fundEscrow(contractId, senderAddress, amount) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10_000); // 10 s
+      const response = await fetch(`${this.baseUrl}/escrow/single-release/fund-escrow`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': `${this.apiKey}`
+        },
+        body: JSON.stringify({
+          contractId,
+          signer: senderAddress,
+          amount
+        }),
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Trustless Work API Error: ${response.status} ${errorText}`);
+      }
+
+      const data = await response.json();
+      return data; // Expected { contractId, unsignedXdr }
+    } catch (error) {
+      logger.error('Failed to call Trustless Work API', { error: error.message, contractId });
+      throw error;
     }
   }
 }
