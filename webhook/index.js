@@ -42,6 +42,8 @@ const initiateFunding = require('./actions/initiate-funding');
 const verifyTransaction = require('./actions/verify-transaction');
 const releaseFunds = require('./actions/release-funds');
 const processRefund = require('./actions/process-refund');
+const openDispute = require('./actions/open-dispute');
+
 
 // --- Middleware Imports ---
 const { authMiddleware } = require('./middleware/auth');
@@ -52,15 +54,12 @@ const app = express();
 const PORT = process.env.WEBHOOK_PORT || 3001;
 
 // --- Middleware Setup ---
-app.use(helmet()); // Added for security headers
+app.use(helmet());
 app.use(express.json());
 app.use(cors({
   credentials: true,
   origin: true,
 }));
-
-// Request parsing
-app.use(express.json());
 
 // HTTP request logging
 app.use(morgan('combined', { stream: logger.stream }));
@@ -92,7 +91,7 @@ const asyncHandler = (fn) => (req, res, next) =>
   Promise.resolve(fn(req, res, next)).catch(next);
 
 
-// IP whitelist (applies to all routes except /health)
+// IP whitelist
 app.use(ipWhitelist);
 
 // Global rate limiting
@@ -102,7 +101,6 @@ app.use(globalLimiter);
 
 // Public property details endpoint
 app.use('/api/properties', propertiesRoutes);
-
 // Health check
 app.get('/health', (req, res) => {
   res.json({
@@ -140,6 +138,14 @@ app.use('/',
   prepareEscrowContractRoutes
 );
 
+app.post('/api/escrow/dispute',
+  verifyAdminSecret,
+  validateJWT,
+  auditLog,
+  createTenantLimiter(300),
+  openDispute
+);
+
 // Escrow Status API - Protected with Firebase JWT authentication
 app.use('/api/escrow',
   verifyFirebaseToken,
@@ -147,21 +153,7 @@ app.use('/api/escrow',
   escrowStatusRoutes
 );
 
-// Error handler
-app.use((err, req, res, next) => {
-  if (err) {
-    // Log to file/stream if it's an action error
-    if (req.url.startsWith('/actions')) {
-      logger.error(err.stack);
-    } else {
-      console.error(err.message);
-      console.error(err.stack);
-    }
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-// Hasura Webhooks - Protected endpoints
+// Hasura Webhooks
 app.use('/',
   verifyAdminSecret,
   validateJWT,
@@ -169,6 +161,10 @@ app.use('/',
   createTenantLimiter(500),
   webhooksRoutes
 );
+
+// Error handler
+app.use(errorHandler);
+app.use(notFoundHandler);
 
 if (require.main === module) {
   app.listen(PORT, () => {
@@ -182,6 +178,7 @@ if (require.main === module) {
     logger.info('- POST /api/auth/forgot-password (Public)');
     logger.info('- POST /prepare-escrow-contract (Protected)');
     logger.info('- POST /api/escrow/fund (Protected)');
+    logger.info('- POST /api/escrow/dispute (Protected)');
     logger.info('- POST /webhooks/* (Protected)');
     logger.info('');
     logger.info('Security features enabled:');
@@ -194,6 +191,7 @@ if (require.main === module) {
     console.log('- POST /actions/verify-transaction');
     console.log('- POST /actions/release-funds');
     console.log('- POST /actions/process-refund');
+    console.log('- POST /api/escrow/dispute');
   });
 }
 
