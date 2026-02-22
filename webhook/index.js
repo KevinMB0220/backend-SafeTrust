@@ -10,7 +10,7 @@ const morgan = require('morgan');
 // Import security middleware
 const { verifyAdminSecret } = require('./middleware/auth');
 const { validateJWT } = require('./middleware/jwt-auth');
-const { globalLimiter, createTenantLimiter, createEndpointLimiter } = require('./middleware/rate-limiter');
+const { globalLimiter, createTenantLimiter } = require('./middleware/rate-limiter');
 const { validateRequest } = require('./middleware/validator');
 const ipWhitelist = require('./middleware/ip-whitelist');
 const auditLog = require('./middleware/audit-logger');
@@ -23,6 +23,7 @@ const webhooksRoutes = require('./webhooks');
 const forgotPasswordRoutes = require('./forgot-password');
 const resetPasswordRoutes = require('./reset-password');
 const prepareEscrowContractRoutes = require('./prepare-escrow-contract');
+const fundEscrowHandler = require('./handlers/fund-escrow');
 const escrowStatusRoutes = require('./routes/escrow-status');
 const propertiesRoutes = require('./routes/properties');
 
@@ -85,7 +86,7 @@ const actionLimiter = rateLimit({
   message: { error: 'Too many requests, please try again later.' }
 });
 
-//Async Wrapper
+//Async Wrapper (Prevents crashes on async errors)
 const asyncHandler = (fn) => (req, res, next) =>
   Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -109,7 +110,25 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Protected Routes
+// Debug middleware to log all requests (development only)
+if (process.env.NODE_ENV !== 'production') {
+  app.use((req, res, next) => {
+    console.log(`${req.method} ${req.url}`);
+    next();
+  });
+}
+
+// Escrow Funding Endpoint - Protected by JWT (but not admin secret)
+app.post('/api/escrow/fund',
+  validateJWT,
+  createTenantLimiter(100),
+  fundEscrowHandler
+);
+
+// Protected Routes - Require Hasura admin secret verification
+// These routes are called by Hasura Actions/Events
+
+// Prepare Escrow Contract - Protected endpoint for Hasura Actions
 app.use('/',
   verifyAdminSecret,
   validateJWT,
@@ -147,28 +166,33 @@ app.use('/',
 app.use(errorHandler);
 app.use(notFoundHandler);
 
-app.listen(PORT, () => {
-  logger.info(`🔐 Secure webhook service listening on port ${PORT}`);
-  logger.info('Available routes:');
-  logger.info('- GET  /health');
-  logger.info('- GET  /api/escrow/status/:contractId (Protected - Firebase JWT)');
-  logger.info('- GET  /api/properties/:id (Public)');
-  logger.info('- GET  /api/auth/validate-reset-token (Public)');
-  logger.info('- POST /api/auth/reset-password (Public)');
-  logger.info('- POST /api/auth/forgot-password (Public)');
-  logger.info('- POST /api/escrow/dispute (Protected)');
-  logger.info('- POST /prepare-escrow-contract (Protected)');
-  logger.info('- POST /webhooks/* (Protected)');
-  logger.info('');
-  logger.info('Security features enabled:');
-  logger.info(`- IP Whitelist: ${process.env.IP_WHITELIST_ENABLED === 'true' ? 'Yes' : 'No'}`);
-  logger.info(`- Audit Logging: ${process.env.AUDIT_LOGGING_ENABLED === 'true' ? 'Yes' : 'No'}`);
-  logger.info(`- Rate Limiting: Yes (Redis: ${process.env.REDIS_URL ? 'Yes' : 'No (Memory)'})`);
-  console.log('--- Hasura Actions ---');
-  console.log('- POST /actions/verify-wallet');
-  console.log('- POST /actions/initiate-funding');
-  console.log('- POST /actions/verify-transaction');
-  console.log('- POST /actions/release-funds');
-  console.log('- POST /actions/process-refund');
-  console.log('- POST /api/escrow/dispute');
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    logger.info(`🔐 Secure webhook service listening on port ${PORT}`);
+    logger.info('Available routes:');
+    logger.info('- GET  /health');
+    logger.info('- GET  /api/properties/:id (Public)');
+    logger.info('- GET  /api/escrow/status/:contractId (Protected - Firebase JWT)');
+    logger.info('- GET  /api/auth/validate-reset-token (Public)');
+    logger.info('- POST /api/auth/reset-password (Public)');
+    logger.info('- POST /api/auth/forgot-password (Public)');
+    logger.info('- POST /prepare-escrow-contract (Protected)');
+    logger.info('- POST /api/escrow/fund (Protected)');
+    logger.info('- POST /api/escrow/dispute (Protected)');
+    logger.info('- POST /webhooks/* (Protected)');
+    logger.info('');
+    logger.info('Security features enabled:');
+    logger.info(`- IP Whitelist: ${process.env.IP_WHITELIST_ENABLED === 'true' ? 'Yes' : 'No'}`);
+    logger.info(`- Audit Logging: ${process.env.AUDIT_LOGGING_ENABLED === 'true' ? 'Yes' : 'No'}`);
+    logger.info(`- Rate Limiting: Yes (Redis: ${process.env.REDIS_URL ? 'Yes' : 'No (Memory)'})`);
+    console.log('--- Hasura Actions ---');
+    console.log('- POST /actions/verify-wallet');
+    console.log('- POST /actions/initiate-funding');
+    console.log('- POST /actions/verify-transaction');
+    console.log('- POST /actions/release-funds');
+    console.log('- POST /actions/process-refund');
+    console.log('- POST /api/escrow/dispute');
+  });
+}
+
+module.exports = app;
