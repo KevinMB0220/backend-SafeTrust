@@ -207,9 +207,6 @@ const { logger } = require('./utils/logger');
 
 // Import route handlers
 
-
-const rateLimit = require('express-rate-limit');
-
 const webhooksRoutes = require('./webhooks');
 const forgotPasswordRoutes = require('./forgot-password');
 const resetPasswordRoutes = require('./reset-password');
@@ -217,6 +214,7 @@ const prepareEscrowContractRoutes = require('./prepare-escrow-contract');
 const fundEscrowHandler = require('./handlers/fund-escrow');
 const escrowStatusRoutes = require('./routes/escrow-status');
 const propertiesRoutes = require('./routes/properties');
+const { getProperties, searchPropertiesHandler } = require('./handlers/properties');
 
 // Event trigger handlers
 const escrowCreatedHandler = require('./events/escrow-created');
@@ -279,11 +277,6 @@ const actionLimiter = rateLimit({
   message: { error: 'Too many requests, please try again later.' }
 });
 
-//Async Wrapper (Prevents crashes on async errors)
-const asyncHandler = (fn) => (req, res, next) =>
-  Promise.resolve(fn(req, res, next)).catch(next);
-
-
 // IP whitelist
 app.use(ipWhitelist);
 
@@ -294,8 +287,6 @@ app.use(globalLimiter);
    PUBLIC ROUTES
 ========================= */
 
-// Public property details endpoint
-app.use('/api/properties', propertiesRoutes);
 // Health check
 app.get('/health', (req, res) => {
   res.json({
@@ -305,8 +296,14 @@ app.get('/health', (req, res) => {
   });
 });
 
+// ✅ Public Properties Search API with filters (must be before /:id route)
+app.get('/api/properties/search', searchPropertiesHandler);
+
 // ✅ Public Properties API
 app.get('/api/properties', getProperties);
+
+// Public property details endpoint (must be after specific routes)
+app.use('/api/properties', propertiesRoutes);
 
 // --- Trustless Work API ---
 app.post('/api/escrow/release', verifyAdminSecret, validateJWT, auditLog, createTenantLimiter(200), asyncHandler(releaseEscrow));
@@ -364,27 +361,7 @@ app.use(errorHandler);
 
 /* =========================
    START SERVER
-
-app.listen(PORT, () => {
-  logger.info(`🔐 Secure webhook service listening on port ${PORT}`);
-  logger.info('Available routes:');
-  logger.info('- GET  /health');
-
-  logger.info('- GET  /api/properties');
-  logger.info('- GET  /api/properties?type=hotel');
-  logger.info('- GET  /api/properties?limit=2&offset=1');
-
-  logger.info('- GET  /api/properties/:id (Public)');
-  logger.info('- GET  /api/auth/validate-reset-token (Public)');
-  logger.info('- POST /api/auth/reset-password (Public)');
-  logger.info('- POST /api/auth/forgot-password (Public)');
-
-  logger.info('- POST /prepare-escrow-contract (Protected)');
-  logger.info('- POST /webhooks/* (Protected)');
-});
-// Error handler
-app.use(errorHandler);
-app.use(notFoundHandler);
+========================= */
 
 if (require.main === module) {
   app.listen(PORT, () => {
