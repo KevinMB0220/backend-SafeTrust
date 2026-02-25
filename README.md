@@ -128,6 +128,12 @@ Go to seeds folder: `cd seeds/`
  ```
 Then select the tenant to seed it !
 
+**Alternative (no Hasura CLI):** To apply only the trustless_work_webhook_events seed, run from repo root:
+ ``` shell
+    ./bin/seed_trustless_webhook_events.sh
+ ```
+Requires Postgres running (e.g. `docker compose up -d postgres`) and migrations applied.
+
 # Backend Tests
 
 This project uses Karate framework for API testing. The tests are designed to run in a Docker environment.
