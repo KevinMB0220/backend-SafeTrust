@@ -1,4 +1,5 @@
 const { logger } = require("../utils/logger");
+const { query } = require("../utils/database");
 const { sanitizeForLog } = require("../utils/sanitize");
 
 /**
@@ -16,8 +17,7 @@ const getClientIp = (req) => {
 
 /**
  * Audit logging middleware
- * Logs webhook requests to structured logger for real-time monitoring.
- * Persisted webhook events are handled by trustless_work_webhook_events.
+ * Logs all webhook requests to database for security auditing
  */
 const auditLog = async (req, res, next) => {
   const startTime = Date.now();
@@ -59,8 +59,13 @@ const auditLog = async (req, res, next) => {
     responseBody = data;
     statusCode = res.statusCode;
 
+    // Log completion asynchronously
     const duration = Date.now() - startTime;
-    logAudit(auditData, statusCode, responseBody, duration);
+    logAuditToDB(auditData, statusCode, responseBody, duration).catch((err) => {
+      logger.error("Failed to write audit log in response wrapper", {
+        error: err.message,
+      });
+    });
 
     return originalJson(data);
   };
@@ -69,18 +74,49 @@ const auditLog = async (req, res, next) => {
 };
 
 /**
- * Log webhook request to structured logger (no DB write; trustless_work_webhook_events handles persisted events).
+ * Persist audit log to database
  */
-function logAudit(auditData, statusCode, responseBody, duration) {
-  logger.info("Webhook request audited", {
-    requestId: auditData.request_id,
-    endpoint: auditData.endpoint,
-    method: auditData.method,
-    status: statusCode,
-    duration: `${duration}ms`,
-    userId: auditData.user_id,
-    ip: auditData.ip_address,
-  });
+async function logAuditToDB(auditData, statusCode, responseBody, duration) {
+  try {
+    // Only log to database if audit logging is enabled (or default to true if env not set)
+    if (process.env.AUDIT_LOGGING_ENABLED !== "false") {
+      await query(
+        `INSERT INTO webhook_audit_logs
+         (request_id, endpoint, method, ip, user_id, tenant_id,
+          request_body, status_code, response_body, duration_ms, user_agent, timestamp)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())`,
+        [
+          auditData.request_id,
+          auditData.endpoint,
+          auditData.method,
+          auditData.ip_address,
+          auditData.user_id,
+          auditData.user_role, // Using role as tenant_id for now if specific tenant_id not available
+          JSON.stringify(auditData.request_body),
+          statusCode,
+          JSON.stringify(sanitizeForLog(responseBody)),
+          duration,
+          auditData.headers["user-agent"],
+        ],
+      );
+    }
+
+    // Always log to structured logger for real-time monitoring
+    logger.info("Webhook request audited", {
+      requestId: auditData.request_id,
+      endpoint: auditData.endpoint,
+      method: auditData.method,
+      status: statusCode,
+      duration: `${duration}ms`,
+      userId: auditData.user_id,
+      ip: auditData.ip_address,
+    });
+  } catch (error) {
+    logger.error("Failed to write audit log to database", {
+      error: error.message,
+      requestId: auditData.request_id,
+    });
+  }
 }
 
 module.exports = auditLog;
